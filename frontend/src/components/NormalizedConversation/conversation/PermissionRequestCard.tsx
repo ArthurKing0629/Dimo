@@ -22,10 +22,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-import {
-  resolvePermissionAllowOption,
-  type PermissionAllowScope,
-} from './permissionRequestPresentation';
+import { isAllowOption } from './permissionRequestPresentation';
 
 /**
  * Inline, answerable permission request (Dimo style — docked at the bottom of
@@ -57,18 +54,16 @@ export function PermissionRequestCard({
   );
   const permissionType = permissionTypeFor(detail.kind);
   const PermissionTypeIcon = permissionType.icon;
-  const primaryAllow = resolvePermissionAllowOption(options, 'once');
+  const allowOptions = options.filter(isAllowOption);
+  const primaryAllow = allowOptions.find(
+    (option) =>
+      option.kind === 'allow_once' &&
+      !['acceptForSession', 'acceptAlways'].includes(option.id) &&
+      !option.id.startsWith('allow-prefix-')
+  );
   const rejectOption =
     options.find((option) => option.kind === 'reject_once') ??
     options.find((option) => option.kind === 'reject_always');
-  const allowScopes: Array<{
-    scope: PermissionAllowScope;
-    label: string;
-  }> = [
-    { scope: 'once', label: t('permissionRequestCard.allowOnce') },
-    { scope: 'session', label: t('permissionRequestCard.allowSession') },
-    { scope: 'always', label: t('permissionRequestCard.allowAlways') },
-  ];
   const respondWithOption = (option: AgentPermissionOption, persist = false) =>
     onRespond(request.permission_id, {
       kind: 'selected',
@@ -78,10 +73,7 @@ export function PermissionRequestCard({
         ? { expected_revision: request.revision }
         : {}),
     });
-  const respondWithScope = (scope: PermissionAllowScope) => {
-    const option = resolvePermissionAllowOption(options, scope);
-    if (option) respondWithOption(option, scope !== 'once');
-  };
+  const defaultAllow = primaryAllow ?? allowOptions[0];
 
   return (
     <section className="permission-request-card conv-entry-item w-full rounded-lg border border-border bg-[var(--conv-surface-card)] px-4 py-3.5 text-sm">
@@ -121,7 +113,7 @@ export function PermissionRequestCard({
             >
               {t('permissionRequestCard.reject')}
             </Button>
-            {primaryAllow ? (
+            {defaultAllow ? (
               <div
                 className="permission-request-allow-group inline-flex items-stretch"
                 role="group"
@@ -132,9 +124,11 @@ export function PermissionRequestCard({
                   size="sm"
                   disabled={responding}
                   className="rounded-r-none"
-                  onClick={() => respondWithScope('once')}
+                  onClick={() => respondWithOption(defaultAllow)}
                 >
-                  {t('permissionRequestCard.allow')}
+                  {primaryAllow
+                    ? t('permissionRequestCard.allow')
+                    : defaultAllow.label}
                 </Button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
@@ -153,22 +147,35 @@ export function PermissionRequestCard({
                     side="top"
                     className="w-[min(280px,calc(100vw-24px))] p-1.5"
                   >
-                    {allowScopes.map(({ scope, label }) => {
-                      const option = resolvePermissionAllowOption(
-                        options,
-                        scope
-                      );
-                      return (
-                        <DropdownMenuItem
-                          key={scope}
-                          disabled={responding || !option}
-                          className="px-2.5 py-2"
-                          onSelect={() => respondWithScope(scope)}
-                        >
-                          {label}
-                        </DropdownMenuItem>
-                      );
-                    })}
+                    {allowOptions.map((option) => (
+                      <DropdownMenuItem
+                        key={option.id}
+                        disabled={responding}
+                        className="px-2.5 py-2"
+                        onSelect={() => respondWithOption(option)}
+                      >
+                        <span className="break-all">
+                          {option === primaryAllow
+                            ? t('permissionRequestCard.allowOnce')
+                            : option.id === 'acceptForSession'
+                              ? t('permissionRequestCard.allowSession')
+                              : option.label}
+                          {option.description && (
+                            <small className="block">
+                              {option.description}
+                            </small>
+                          )}
+                        </span>
+                      </DropdownMenuItem>
+                    ))}
+                    {primaryAllow && (
+                      <DropdownMenuItem
+                        disabled={responding}
+                        onSelect={() => respondWithOption(primaryAllow, true)}
+                      >
+                        {t('permissionRequestCard.allowAlways')}
+                      </DropdownMenuItem>
+                    )}
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>

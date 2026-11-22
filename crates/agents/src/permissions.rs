@@ -111,16 +111,15 @@ impl AgentPermissionResponse {
         }
     }
 
-    /// "始终允许" / ACP `allow_always` both mean: answer this request and YOLO the rest.
+    /// 只有显式选择连接级全部允许时，才改变连接的审批模式。
     pub fn should_persist_auto_approve(&self, options: &[AgentPermissionOption]) -> bool {
         match self {
             Self::Selected {
                 option_id, persist, ..
             } => {
                 *persist
-                    || options.iter().any(|option| {
-                        option.id == *option_id
-                            && option.kind == AgentPermissionOptionKind::AllowAlways
+                    && options.iter().any(|option| {
+                        option.id == *option_id && option.kind.is_allow()
                     })
             }
             Self::Cancelled => false,
@@ -378,13 +377,13 @@ mod tests {
     }
 
     #[test]
-    fn persist_flag_or_allow_always_option_upgrades_the_connection() {
+    fn explicit_persist_flag_upgrades_the_connection() {
         let options = vec![
             option("allow-once", AgentPermissionOptionKind::AllowOnce),
             option("allow-always", AgentPermissionOptionKind::AllowAlways),
         ];
         assert!(
-            AgentPermissionResponse::selected("allow-always").should_persist_auto_approve(&options)
+            !AgentPermissionResponse::selected("allow-always").should_persist_auto_approve(&options)
         );
         assert!(
             AgentPermissionResponse::selected_persist("allow-once")

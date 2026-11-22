@@ -142,12 +142,11 @@ describe('PermissionRequestCard', () => {
     expect(
       screen.getByRole('menuitem', { name: '总是允许全部' })
     ).toBeInTheDocument();
-    await user.click(screen.getByRole('menuitem', { name: '本次会话中允许' }));
+    await user.click(screen.getByRole('menuitem', { name: /允许类似命令/ }));
 
     expect(onRespond).toHaveBeenCalledWith('perm-1', {
       kind: 'selected',
       option_id: 'allow-similar',
-      persist: true,
     });
   });
 
@@ -168,6 +167,35 @@ describe('PermissionRequestCard', () => {
       kind: 'selected',
       option_id: 'allow',
       persist: true,
+    });
+  });
+
+  it('将命令前缀原样展示并仅提交所选规则', async () => {
+    const user = userEvent.setup();
+    const onRespond = vi.fn();
+    render(
+      <PermissionRequestCard
+        request={fileEditRequest({
+          options: [
+            { id: 'accept', label: '允许一次', kind: 'allow_once' },
+            {
+              id: 'allow-prefix-1',
+              label: '记住命令前缀',
+              description: '["git","status"]',
+              kind: 'allow_once',
+            },
+          ],
+        })}
+        onRespond={onRespond}
+      />
+    );
+    await user.click(screen.getByRole('button', { name: '展开允许选项' }));
+    await user.click(
+      screen.getByRole('menuitem', { name: /记住命令前缀.*git.*status/ })
+    );
+    expect(onRespond).toHaveBeenCalledWith('perm-1', {
+      kind: 'selected',
+      option_id: 'allow-prefix-1',
     });
   });
 

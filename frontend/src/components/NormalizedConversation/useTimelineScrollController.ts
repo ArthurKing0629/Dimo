@@ -132,7 +132,13 @@ export function useTimelineScrollController({
     index: number | null;
   }>({ sessionId: null, index: null });
   const previousPrependEpochRef = useRef(0);
+  const readingAnchorRef = useRef<{
+    key: string | number | bigint;
+    offset: number;
+  } | null>(null);
   const previousTotalSizeRef = useRef(0);
+  const cancelAnchorRestoreRef = useRef<(() => void) | null>(null);
+  useLayoutEffect(() => () => cancelAnchorRestoreRef.current?.(), [sessionId]);
   const pendingJumpTimelineIndexRef = useRef<{
     index: number;
     align: 'start' | 'center' | 'end' | 'auto';
@@ -296,7 +302,22 @@ export function useTimelineScrollController({
   );
 
   const hasEarlierTimeline = hasHiddenEarlierItems || hasEarlier;
+  const captureReadingAnchor = useCallback(() => {
+    const container = containerRef.current;
+    const list = virtualListRef.current;
+    if (!container || !list) return;
+    const marginDelta =
+      measureScrollMargin(list, container) -
+      rowVirtualizer.options.scrollMargin;
+    const top = container.scrollTop - marginDelta;
+    const row = rowVirtualizer.getVirtualItems().find((item) => item.end > top);
+    readingAnchorRef.current = row
+      ? { key: row.key, offset: top - row.start }
+      : null;
+  }, [rowVirtualizer]);
   const loadEarlierTimeline = useCallback(() => {
+    cancelAnchorRestoreRef.current?.();
+    captureReadingAnchor();
     if (hasHiddenEarlierItems) {
       setVisibleTailSession((current) => {
         const baseCount = current.sessionId === sessionId ? current.count : 24;
@@ -325,6 +346,7 @@ export function useTimelineScrollController({
     });
     void loadOlder();
   }, [
+    captureReadingAnchor,
     hasHiddenEarlierItems,
     loadOlder,
     sessionId,
@@ -550,6 +572,13 @@ export function useTimelineScrollController({
       const scrollHeight = container.scrollHeight;
       lastScrollTopRef.current = scrollTop;
       lastScrollHeightRef.current = scrollHeight;
+      if (
+        readingAnchorRef.current &&
+        event.nativeEvent.isTrusted &&
+        programmaticScrollDepthRef.current === 0
+      ) {
+        captureReadingAnchor();
+      }
       const intent = conversationFollowIntent({
         trustedUserScroll:
           event.nativeEvent.isTrusted &&
@@ -586,6 +615,7 @@ export function useTimelineScrollController({
       updateActiveIndex();
     },
     [
+      captureReadingAnchor,
       detachFromBottom,
       hasEarlierTimeline,
       loadEarlierTimeline,
@@ -817,21 +847,81 @@ export function useTimelineScrollController({
     const prepended = combinedPrependEpoch > previousPrependEpochRef.current;
     const container = containerRef.current;
     if (container) {
-      const nextTop = scrollTopAfterPrepend({
-        followTail: followTailRef.current,
-        sessionChanged,
-        prepended,
-        previousTotalSize: previousTotalSizeRef.current,
-        nextTotalSize: totalSize,
-        scrollTop: container.scrollTop,
-      });
+      const anchor = readingAnchorRef.current;
+      const row =
+        prepended && !sessionChanged && !followTailRef.current && anchor
+          ? rowVirtualizer.measurementsCache.find(
+              (item) => item.key === anchor.key
+            )
+          : undefined;
+      const list = virtualListRef.current;
+      const nextTop =
+        row && anchor && list
+          ? row.start +
+            anchor.offset +
+            measureScrollMargin(list, container) -
+            rowVirtualizer.options.scrollMargin
+          : scrollTopAfterPrepend({
+              followTail: followTailRef.current,
+              sessionChanged,
+              prepended,
+              previousTotalSize: previousTotalSizeRef.current,
+              nextTotalSize: totalSize,
+              scrollTop: container.scrollTop,
+            });
       if (nextTop !== container.scrollTop) {
         runProgrammaticScroll(() => {
           container.scrollTop = nextTop;
         });
       }
+      if (row && anchor && list) {
+        cancelAnchorRestoreRef.current?.();
+        let frame = 0;
+        let stableFrames = 0;
+        const cancel = () => {
+          cancelAnimationFrame(frame);
+          container.removeEventListener('wheel', cancel, true);
+          container.removeEventListener('pointerdown', cancel, true);
+          window.removeEventListener('keydown', cancel, true);
+          cancelAnchorRestoreRef.current = null;
+        };
+        const settle = () => {
+          const current = rowVirtualizer.measurementsCache.find(
+            (item) => item.key === anchor.key
+          );
+          if (!current || followTailRef.current) return cancel();
+          const top =
+            current.start +
+            anchor.offset +
+            measureScrollMargin(list, container) -
+            rowVirtualizer.options.scrollMargin;
+          const target = Math.max(
+            0,
+            Math.min(top, container.scrollHeight - container.clientHeight)
+          );
+          if (Math.abs(container.scrollTop - target) > 1) {
+            stableFrames = 0;
+            runProgrammaticScroll(() => {
+              container.scrollTop = target;
+            });
+          } else if (++stableFrames >= 3) {
+            return cancel();
+          }
+          frame = requestAnimationFrame(settle);
+        };
+        container.addEventListener('wheel', cancel, {
+          capture: true,
+          passive: true,
+        });
+        container.addEventListener('pointerdown', cancel, true);
+        window.addEventListener('keydown', cancel, true);
+        cancelAnchorRestoreRef.current = cancel;
+        frame = requestAnimationFrame(settle);
+      }
     }
     previousPrependEpochRef.current = combinedPrependEpoch;
+    if (prepended || sessionChanged || followTailRef.current)
+      readingAnchorRef.current = null;
     previousTotalSizeRef.current = totalSize;
     sessionPinRef.current = sessionId;
     const currentExpandableRevision = getExpandableRevision();

@@ -75,7 +75,7 @@ pub fn codex_approval_options() -> Vec<AgentPermissionOption> {
         AgentPermissionOption {
             id: "acceptForSession".to_string(),
             label: "Allow for session".to_string(),
-            kind: AgentPermissionOptionKind::AllowAlways,
+            kind: AgentPermissionOptionKind::AllowOnce,
             description: None,
         },
         AgentPermissionOption {
@@ -85,6 +85,34 @@ pub fn codex_approval_options() -> Vec<AgentPermissionOption> {
             description: None,
         },
     ]
+}
+
+fn command_approval_options(params: &Value) -> Vec<AgentPermissionOption> {
+    let Some(decisions) = params.get("availableDecisions").and_then(Value::as_array) else {
+        return codex_approval_options();
+    };
+    let defaults = codex_approval_options();
+    decisions.iter().enumerate().filter_map(|(index, value)| {
+        if let Some(id) = value.as_str() {
+            if id == "cancel" {
+                return Some(AgentPermissionOption {
+                    id: id.into(), label: "取消".into(),
+                    kind: AgentPermissionOptionKind::RejectOnce, description: None,
+                });
+            }
+            return defaults.iter().find(|option| option.id == id).cloned();
+        }
+        let prefix = value.pointer("/acceptWithExecpolicyAmendment/execpolicy_amendment")?.as_array()?;
+        if prefix.is_empty() || !prefix.iter().all(Value::is_string) {
+            return None;
+        }
+        Some(AgentPermissionOption {
+            id: format!("allow-prefix-{index}"),
+            label: "记住命令前缀".into(),
+            description: Some(json!(prefix).to_string()),
+            kind: AgentPermissionOptionKind::AllowOnce,
+        })
+    }).collect()
 }
 
 pub fn default_codex_models() -> Vec<EngineModelInfo> {
@@ -357,7 +385,11 @@ pub fn parse_codex_server_request(
                 tool_name,
                 input: params.clone(),
                 decision_reason,
-                options: codex_approval_options(),
+                options: if default_tool == "commandExecution" {
+                    command_approval_options(params)
+                } else {
+                    codex_approval_options()
+                },
             };
             Some((permission_id, record, event))
         }
@@ -459,6 +491,17 @@ pub fn build_codex_server_request_result(
         return (result, "accept".to_string());
     }
 
+    if let Some(index) = decision.option_id.as_deref().and_then(|id| id.strip_prefix("allow-prefix-")) {
+        if !decision.interrupt && decision.approved && pending.method == "item/commandExecution/requestApproval"
+            && let Some(advertised) = index.parse::<usize>().ok()
+                .and_then(|i| pending.params.get("availableDecisions")?.get(i))
+            && advertised.pointer("/acceptWithExecpolicyAmendment/execpolicy_amendment")
+                .and_then(Value::as_array).is_some_and(|p| !p.is_empty() && p.iter().all(Value::is_string))
+        {
+            return (json!({ "decision": advertised }), "accept".into());
+        }
+        return (json!({ "decision": "cancel" }), "cancel".into());
+    }
     let codex_decision = if decision.interrupt {
         "cancel"
     } else {
@@ -1335,6 +1378,20 @@ mod tests {
             prompt_id: Some("turn".to_string()),
             params: json!({}),
         }
+    }
+
+    #[test]
+    fn command_rule_round_trip_uses_the_offered_prefix() {
+        let mut request = pending("item/commandExecution/requestApproval");
+        let rule = json!({"acceptWithExecpolicyAmendment": {"execpolicy_amendment": ["git", "status"]}});
+        request.params = json!({"availableDecisions": ["accept", rule, "cancel"]});
+        let options = command_approval_options(&request.params);
+        let ids: Vec<_> = options.iter().map(|option| option.id.as_str()).collect();
+        assert_eq!(ids, ["accept", "allow-prefix-1", "cancel"]);
+        let result = |id| build_codex_server_request_result(&request, &decision(Some(id), true, false)).0;
+        assert_eq!(result("allow-prefix-1"), json!({"decision": rule}));
+        assert_eq!(result("allow-prefix-0"), json!({"decision": "cancel"}));
+        assert_eq!(result("allow-prefix-2"), json!({"decision": "cancel"}));
     }
 
     #[test]

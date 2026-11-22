@@ -166,7 +166,8 @@ export function scrollTopToRevealVirtualWindow(input: {
   windowHeight: number;
   followTail: boolean;
 }): number | null {
-  if (input.viewportHeight <= 0 || input.windowHeight <= 1) return null;
+  if (!input.followTail || input.viewportHeight <= 0 || input.windowHeight <= 1)
+    return null;
   const visualTop = Math.max(0, input.windowStart ?? input.scrollMargin);
   const visualBottom = visualTop + input.windowHeight;
   const viewTop = input.scrollTop;
@@ -175,8 +176,8 @@ export function scrollTopToRevealVirtualWindow(input: {
   const maxScroll = Math.max(0, input.scrollHeight - input.viewportHeight);
   let next: number | null = null;
   if (!intersects) {
-    next = input.followTail ? maxScroll : Math.min(visualTop, maxScroll);
-  } else if (input.followTail && visualBottom > viewBottom + 1) {
+    next = maxScroll;
+  } else if (visualBottom > viewBottom + 1) {
     next = Math.min(
       Math.max(0, visualBottom - input.viewportHeight),
       maxScroll

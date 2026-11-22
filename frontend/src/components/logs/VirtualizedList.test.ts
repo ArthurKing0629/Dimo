@@ -396,7 +396,7 @@ describe('conversation bottom distance', () => {
         windowHeight: 800,
         followTail: false,
       })
-    ).toBe(2000);
+    ).toBeNull();
     expect(
       scrollTopToRevealVirtualWindow({
         scrollTop: 0,
