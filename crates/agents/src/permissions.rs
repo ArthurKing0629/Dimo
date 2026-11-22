@@ -118,9 +118,9 @@ impl AgentPermissionResponse {
                 option_id, persist, ..
             } => {
                 *persist
-                    && options.iter().any(|option| {
-                        option.id == *option_id && option.kind.is_allow()
-                    })
+                    && options
+                        .iter()
+                        .any(|option| option.id == *option_id && option.kind.is_allow())
             }
             Self::Cancelled => false,
         }
@@ -383,7 +383,8 @@ mod tests {
             option("allow-always", AgentPermissionOptionKind::AllowAlways),
         ];
         assert!(
-            !AgentPermissionResponse::selected("allow-always").should_persist_auto_approve(&options)
+            !AgentPermissionResponse::selected("allow-always")
+                .should_persist_auto_approve(&options)
         );
         assert!(
             AgentPermissionResponse::selected_persist("allow-once")
