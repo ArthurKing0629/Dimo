@@ -151,7 +151,9 @@ impl ProjectService {
             Err(error) => {
                 // Concurrent folder imports can both miss the initial root-path lookup.
                 if normalized_repos.is_empty()
-                    && error.as_database_error().is_some_and(|e| e.is_unique_violation())
+                    && error
+                        .as_database_error()
+                        .is_some_and(|e| e.is_unique_violation())
                     && let Some(existing) =
                         Project::find_any_by_root_path(pool, &payload.root_path).await?
                 {
